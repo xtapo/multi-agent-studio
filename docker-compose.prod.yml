@@ -1,0 +1,56 @@
+# Production-shaped stack: database, web tier, and a separate run worker.
+#
+#   docker compose -f docker-compose.prod.yml up --build
+#
+# The worker is the process that executes agents, so it is the one that scales:
+#   docker compose -f docker-compose.prod.yml up --scale worker=3
+# pg-boss hands each queued run to exactly one worker.
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mas-postgres-prod
+    environment:
+      POSTGRES_USER: mas
+      POSTGRES_PASSWORD: mas
+      POSTGRES_DB: multi_agent_studio
+    volumes:
+      - mas-pgdata-prod:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mas -d multi_agent_studio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build: .
+    command: sh -c "npx prisma db push --skip-generate && npm run start"
+    environment: &app_env
+      DATABASE_URL: postgresql://mas:mas@postgres:5432/multi_agent_studio?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET in your shell or .env}
+      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY in your shell or .env}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CUSTOM_LLM_BASE_URL: ${CUSTOM_LLM_BASE_URL:-}
+      CUSTOM_LLM_MODELS: ${CUSTOM_LLM_MODELS:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      # Durable execution is the whole reason the worker service exists.
+      RUN_QUEUE_ENABLED: "true"
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: .
+    command: npm run worker:start
+    environment: *app_env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      web:
+        condition: service_started
+
+volumes:
+  mas-pgdata-prod:
