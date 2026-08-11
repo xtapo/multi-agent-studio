@@ -76,6 +76,7 @@ export interface LLMProvider {
   readonly id: string;
   readonly displayName: string;
   isConfigured(): boolean;
+  listModels?(): Promise<string[]>;
   generate(request: LLMRequest): Promise<LLMResponse>;
   stream(request: LLMRequest): AsyncIterable<LLMStreamEvent>;
 }

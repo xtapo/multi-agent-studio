@@ -45,10 +45,10 @@ export default async function SettingsPage() {
           </CardHeader>
           <CardContent className="space-y-2 p-5 pt-0">
             {providers.map((provider) => (
-              <div key={provider.name} className="flex items-center justify-between text-sm">
-                <span className="capitalize">{provider.name}</span>
-                <Badge variant={provider.configured ? "success" : "outline"}>
-                  {provider.configured ? "configured" : "no API key"}
+              <div key={provider.id} className="flex items-center justify-between text-sm">
+                <span className="capitalize">{provider.displayName}</span>
+                <Badge variant={provider.isConfigured() ? "success" : "outline"}>
+                  {provider.isConfigured() ? "configured" : "no API key"}
                 </Badge>
               </div>
             ))}

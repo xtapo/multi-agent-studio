@@ -19,7 +19,7 @@ interface ToolInfo {
 }
 interface ModelInfo {
   id: string;
-  displayName: string;
+  label: string;
   available: boolean;
 }
 
@@ -196,14 +196,15 @@ export function AgentBuilder({ initial }: { initial?: AgentFormValue }) {
           </CardHeader>
           <CardContent className="space-y-4">
             <Field label="Model">
-              <Select value={value.model} onChange={(e) => set("model", e.target.value)}>
+              <Input list="models-list" value={value.model} onChange={(e) => set("model", e.target.value)} placeholder="Type or select a model..." />
+              <datalist id="models-list">
                 {models.map((model) => (
                   <option key={model.id} value={model.id}>
-                    {model.displayName}
+                    {model.label}
                     {model.available ? "" : " (no API key)"}
                   </option>
                 ))}
-              </Select>
+              </datalist>
             </Field>
 
             <Field label={`Temperature — ${value.temperature.toFixed(2)}`} hint="Low for routing and extraction, high for writing.">

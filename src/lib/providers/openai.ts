@@ -38,6 +38,17 @@ export class OpenAIProvider implements LLMProvider {
     return this.client;
   }
 
+  async listModels(): Promise<string[]> {
+    if (!this.isConfigured()) return [];
+    try {
+      const response = await this.getClient().models.list();
+      return response.data.map((m) => `openai:${m.id}`);
+    } catch (err) {
+      console.error("Failed to fetch OpenAI models:", err);
+      return [];
+    }
+  }
+
   /** Strip our "openai:" prefix before talking to the vendor API. */
   private bareModel(model: string): string {
     return model.startsWith("openai:") ? model.slice("openai:".length) : model;
