@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens.
+ * Everything is expressed as HSL channel triplets so Tailwind can compose them
+ * with opacity modifiers (bg-primary/10). Dark mode swaps the same variable
+ * names — no component ever hardcodes a colour.
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 224 24% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 224 24% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 224 24% 12%;
+    --primary: 243 75% 59%;
+    --primary-foreground: ０ 0% 100%;
+    --secondary: 220 14% 96%;
+    --secondary-foreground: 224 24% 12%;
+    --muted: 220 14% 96%;
+    --muted-foreground: 220 9% 46%;
+    --accent: 220 14% 96%;
+    --accent-foreground: 224 24% 12%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 60% 36%;
+    --warning: 38 92% 50%;
+    --border: 220 13% 91%;
+    --input: 220 13% 91%;
+    --ring: 243 75% 59%;
+    --radius: 0.65rem;
+  }
+
+  .dark {
+    --background: 224 30% 7%;
+    --foreground: 210 20% 96%;
+    --card: 224 26% 10%;
+    --card-foreground: 210 20% 96%;
+    --popover: 224 26% 10%;
+    --popover-foreground: 210 20% 96%;
+    --primary: 243 75% 66%;
+    --primary-foreground: 224 30% 7%;
+    --secondary: 223 20% 16%;
+    --secondary-foreground: 210 20% 96%;
+    --muted: 223 20% 16%;
+    --muted-foreground: 218 11% 62%;
+    --accent: 223 20% 18%;
+    --accent-foreground: 210 20% 96%;
+    --destructive: 0 63% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 152 52% 46%;
+    --warning: 38 92% 58%;
+    --border: 223 18% 20%;
+    --input: 223 18% 22%;
+    --ring: 243 75% 66%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@layer components {
+  /* Shared surface for cards, panels and the node editor chrome. */
+  .panel {
+    @apply rounded-xl border border-border bg-card shadow-sm;
+  }
+
+  .prose-output {
+    @apply text-sm leading-relaxed;
+  }
+  .prose-output h1,
+  .prose-output h2,
+  .prose-output h3 {
+    @apply mb-2 mt-4 font-semibold text-foreground;
+  }
+  .prose-output h1 { @apply text-lg; }
+  .prose-output h2 { @apply text-base; }
+  .prose-output p { @apply mb-3; }
+  .prose-output ul { @apply mb-3 list-disc space-y-1 pl-5; }
+  .prose-output ol { @apply mb-3 list-decimal space-y-1 pl-5; }
+  .prose-output code { @apply rounded bg-muted px-1 py-0.5 font-mono text-xs; }
+  .prose-output pre { @apply mb-3 overflow-x-auto rounded-lg bg-muted p-3 text-xs; }
+  .prose-output a { @apply text-primary underline underline-offset-2; }
+}
+
+/* React Flow surface tuned to the token palette. */
+.react-flow__background { @apply bg-muted/30; }
+.react-flow__handle { @apply !h-3 !w-3 !border-2 !border-background !bg-primary; }
+.react-flow__edge-path { stroke: hsl(var(--muted-foreground)); stroke-width: 2; }
+.react-flow__edge.selected .react-flow__edge-path { stroke: hsl(var(--primary)); }
+.react-flow__controls button {
+  @apply !border-border !bg-card !fill-foreground hover:!bg-accent;
+}
+.react-flow__attribution { display: none; }
