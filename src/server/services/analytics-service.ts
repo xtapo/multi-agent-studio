@@ -11,7 +11,7 @@ export async function getAnalytics(workspaceId: string, days = 30) {
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const where = { workspaceId, startedAt: { gte: since } };
 
-  const [totals, byStatus, agentStats, recent] = await Promise.all([
+  const [totals, byStatus, agentStatsRaw, recent, modelStatsRaw] = await Promise.all([
     prisma.workflowRun.aggregate({
       where,
       _count: { _all: true },
@@ -32,26 +32,33 @@ export async function getAnalytics(workspaceId: string, days = 30) {
       take: 30,
       select: { id: true, status: true, startedAt: true, durationMs: true, estimatedCost: true, totalTokens: true },
     }),
+    prisma.agentRun.groupBy({
+      by: ["model"],
+      where: { run: where },
+      _count: { _all: true },
+      _sum: { estimatedCost: true, inputTokens: true, outputTokens: true },
+    }),
   ]);
 
   const statusCounts = Object.fromEntries(byStatus.map((s) => [s.status, s._count._all]));
   const totalRuns = totals._count._all;
   const completed = statusCounts.COMPLETED ?? 0;
+  const failedRuns = statusCounts.FAILED ?? 0;
 
   // Per-agent failure rate, which is the number that actually tells you which
   // prompt to fix.
-  const agents = new Map<string, { name: string; runs: number; failures: number; avgLatencyMs: number; cost: number; tokens: number }>();
-  for (const stat of agentStats) {
+  const agents = new Map<string, { agentName: string; runs: number; failures: number; averageDurationMs: number; cost: number; tokens: number }>();
+  for (const stat of agentStatsRaw) {
     const entry = agents.get(stat.agentName) ?? {
-      name: stat.agentName,
+      agentName: stat.agentName,
       runs: 0,
       failures: 0,
-      avgLatencyMs: 0,
+      averageDurationMs: 0,
       cost: 0,
       tokens: 0,
     };
     const count = stat._count._all;
-    entry.avgLatencyMs = (entry.avgLatencyMs * entry.runs + (stat._avg.durationMs ?? 0) * count) / (entry.runs + count);
+    entry.averageDurationMs = (entry.averageDurationMs * entry.runs + (stat._avg.durationMs ?? 0) * count) / (entry.runs + count);
     entry.runs += count;
     if (stat.status === "FAILED") entry.failures += count;
     entry.cost += stat._sum.estimatedCost ?? 0;
@@ -59,19 +66,28 @@ export async function getAnalytics(workspaceId: string, days = 30) {
     agents.set(stat.agentName, entry);
   }
 
+  const modelStats = modelStatsRaw.map(m => ({
+    model: m.model ?? "unknown",
+    calls: m._count._all,
+    tokens: (m._sum.inputTokens ?? 0) + (m._sum.outputTokens ?? 0),
+    cost: m._sum.estimatedCost ?? 0
+  })).sort((a, b) => b.calls - a.calls);
+
   return {
-    periodDays: days,
+    days,
     totalRuns,
     successRate: totalRuns > 0 ? completed / totalRuns : 0,
+    failedRuns,
     statusCounts,
     totalTokens: totals._sum.totalTokens ?? 0,
     totalCost: totals._sum.estimatedCost ?? 0,
     totalSteps: totals._sum.stepCount ?? 0,
     totalToolCalls: totals._sum.toolCallCount ?? 0,
-    averageLatencyMs: Math.round(totals._avg.durationMs ?? 0),
-    agents: [...agents.values()]
-      .map((a) => ({ ...a, failureRate: a.runs > 0 ? a.failures / a.runs : 0, avgLatencyMs: Math.round(a.avgLatencyMs) }))
+    averageDurationMs: Math.round(totals._avg.durationMs ?? 0),
+    agentStats: [...agents.values()]
+      .map((a) => ({ ...a, failureRate: a.runs > 0 ? a.failures / a.runs : 0, averageDurationMs: Math.round(a.averageDurationMs) }))
       .sort((a, b) => b.runs - a.runs),
+    modelStats,
     recentRuns: recent,
   };
 }

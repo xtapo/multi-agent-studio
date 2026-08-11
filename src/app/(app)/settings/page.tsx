@@ -16,7 +16,7 @@ export default async function SettingsPage() {
   const session = await auth();
   const registry = getProviderRegistry();
   const providers = registry.list();
-  const budget = defaultBudgetFromEnv();
+  const budget = defaultBudgetFromEnv;
 
   return (
     <div className="p-6 lg:p-8">
