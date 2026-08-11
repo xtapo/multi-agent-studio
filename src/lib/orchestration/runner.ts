@@ -2,7 +2,9 @@ import { prisma } from "@/server/db";
 import { env } from "@/lib/env";
 import { AppError, toAppError } from "@/lib/errors";
 import { MemoryStore } from "@/lib/memory/memory-store";
+import { runWithProviderKeys } from "@/lib/providers/context";
 import { loadWorkflowDefinition } from "@/server/repositories/workflow-repo";
+import { loadUserProviderKeys } from "@/server/repositories/provider-key-repo";
 import type { RunBudget } from "@/types/run";
 import { truncate } from "@/lib/utils";
 import { BudgetTracker, resolveBudget } from "./budget";
@@ -107,6 +109,22 @@ function watchForCancellation(runId: string, budget: BudgetTracker): () => void 
   return () => clearInterval(timer);
 }
 
+/**
+ * Decrypt the triggering user's own provider keys, if any.
+ *
+ * Never fatal: a stale or unreadable key must not take a run down, it just
+ * falls back to the server credentials.
+ */
+async function resolveProviderKeys(userId?: string) {
+  if (!userId) return undefined;
+  try {
+    return await loadUserProviderKeys(userId);
+  } catch (err) {
+    console.error("[run] could not load user provider keys; falling back to server keys", err);
+    return undefined;
+  }
+}
+
 export async function executeRun(params: StartRunParams & { runId: string }): Promise<void> {
   const { runId, workspaceId, workflowId, userId, input, variables } = params;
   const bus = new RunEventBus(runId);
@@ -136,16 +154,21 @@ export async function executeRun(params: StartRunParams & { runId: string }): Pr
 
     const state = createInitialState({ runId, workflowId, task: input, variables });
     const memory = new MemoryStore(workspaceId, workflowId, userId);
+    const apiKeys = await resolveProviderKeys(userId);
 
-    const result = await runWorkflow({
-      workflow: definition,
-      state,
-      budget,
-      bus,
-      runId,
-      workspaceId,
-      memory,
-    });
+    // Everything inside this callback — every agent, every model call — resolves
+    // providers through the user's own credentials when they have some.
+    const result = await runWithProviderKeys(apiKeys, () =>
+      runWorkflow({
+        workflow: definition,
+        state,
+        budget: budget!,
+        bus,
+        runId,
+        workspaceId,
+        memory,
+      }),
+    );
 
     const finalText = result.finalText ?? result.finalOutput?.text ?? "";
     const usage = budget.usage();
