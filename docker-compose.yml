@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mas-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mas
+      POSTGRES_PASSWORD: mas
+      POSTGRES_DB: multi_agent_studio
+    ports:
+      # 5433 on the host so it never collides with a local Postgres install.
+      - "5433:5432"
+    volumes:
+      - mas-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mas -d multi_agent_studio"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mas-pgdata:
