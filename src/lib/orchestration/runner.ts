@@ -1,4 +1,5 @@
 import { prisma } from "@/server/db";
+import { env } from "@/lib/env";
 import { AppError, toAppError } from "@/lib/errors";
 import { MemoryStore } from "@/lib/memory/memory-store";
 import { loadWorkflowDefinition } from "@/server/repositories/workflow-repo";
@@ -13,18 +14,20 @@ import { createInitialState, snapshotState } from "./state";
  * Run orchestrator — the boundary between HTTP and the engine.
  *
  * Architecture decision: POST /run returns a runId immediately and the
- * execution continues in the background, writing every event to the RunEvent
- * table. The client subscribes over SSE, which is just a cursor over that
- * table.
+ * execution continues elsewhere, writing every event to the RunEvent table.
+ * The client subscribes over SSE, which is just a cursor over that table.
  *
  * Trade-off: ~250ms of polling latency per event and one extra table, in
  * exchange for three properties an in-memory stream cannot give us — the run
  * survives the request being aborted, the timeline is fully replayable after
- * the fact, and it works unchanged behind multiple serverless instances where
- * the reader is never the process that wrote the event.
+ * the fact, and it works unchanged behind multiple instances where the reader
+ * is never the process that wrote the event.
  *
- * For a long-lived deployment the same `executeRun` function is what a real
- * queue worker (BullMQ, SQS) would call; only the scheduling line changes.
+ * Two dispatch modes share the exact same `executeRun`:
+ *   - RUN_QUEUE_ENABLED=false (default, dev): fire-and-forget in the web
+ *     process. Zero setup, but a restart kills the run.
+ *   - RUN_QUEUE_ENABLED=true (production): pushed to pg-boss and executed by
+ *     `npm run worker`, so deploys and crashes no longer lose work.
  */
 export interface StartRunParams {
   workspaceId: string;
@@ -54,6 +57,24 @@ export async function startWorkflowRun(params: StartRunParams): Promise<{ runId:
     },
   });
 
+  if (env.RUN_QUEUE_ENABLED) {
+    // Imported lazily so the queue driver is never loaded (or required) in
+    // deployments that run single-process.
+    const { enqueueRun } = await import("@/server/queue/run-queue");
+    try {
+      await enqueueRun({ ...params, runId: run.id });
+      return { runId: run.id };
+    } catch (err) {
+      // If the queue is unreachable we fail loudly rather than silently running
+      // in-process: the operator asked for durability and should get it.
+      await prisma.workflowRun.update({
+        where: { id: run.id },
+        data: { status: "FAILED", error: "Could not enqueue run.", completedAt: new Date() },
+      });
+      throw toAppError(err);
+    }
+  }
+
   // Fire-and-forget. The catch is mandatory: an unhandled rejection here would
   // take the whole Node process down and lose every concurrent run.
   void executeRun({ ...params, runId: run.id }).catch((err) => {
@@ -63,16 +84,41 @@ export async function startWorkflowRun(params: StartRunParams): Promise<{ runId:
   return { runId: run.id };
 }
 
+/**
+ * Watch for a cancellation issued by another process.
+ *
+ * With a separate worker, DELETE /api/runs/:id can no longer reach the
+ * in-memory AbortSignal that owns the execution. The database row is the one
+ * thing both processes share, so we poll it and translate a CANCELLED status
+ * into a real abort. Cheap: one indexed lookup every few seconds.
+ */
+function watchForCancellation(runId: string, budget: BudgetTracker): () => void {
+  const timer = setInterval(() => {
+    void prisma.workflowRun
+      .findUnique({ where: { id: runId }, select: { status: true } })
+      .then((row) => {
+        if (row?.status === "CANCELLED") budget.cancel("Run cancelled by user");
+      })
+      .catch(() => undefined);
+  }, env.RUN_CANCEL_POLL_MS);
+
+  // Never keep the process alive just for this poller.
+  timer.unref?.();
+  return () => clearInterval(timer);
+}
+
 export async function executeRun(params: StartRunParams & { runId: string }): Promise<void> {
   const { runId, workspaceId, workflowId, userId, input, variables } = params;
   const bus = new RunEventBus(runId);
   const startedAt = Date.now();
 
   let budget: BudgetTracker | null = null;
+  let stopWatching: (() => void) | null = null;
 
   try {
     const definition = await loadWorkflowDefinition(workspaceId, workflowId);
     budget = new BudgetTracker(resolveBudget(definition.budget, params.budget));
+    stopWatching = watchForCancellation(runId, budget);
 
     await prisma.workflowRun.update({ where: { id: runId }, data: { status: "RUNNING" } });
 
@@ -171,6 +217,7 @@ export async function executeRun(params: StartRunParams & { runId: string }): Pr
       durationMs,
     });
   } finally {
+    stopWatching?.();
     // Guarantees the terminal event is written before the process may idle out.
     await bus.flush();
   }

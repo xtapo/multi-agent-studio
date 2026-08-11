@@ -8,6 +8,12 @@ import { z } from "zod";
  * this file may ever be imported from a client component — the API keys live
  * here and must never be serialized into the RSC payload.
  */
+const boolean = (fallback: "true" | "false") =>
+  z
+    .enum(["true", "false"])
+    .default(fallback)
+    .transform((v) => v === "true");
+
 const schema = z.object({
   DATABASE_URL: z.string().min(1),
 
@@ -25,10 +31,7 @@ const schema = z.object({
   CUSTOM_LLM_NAME: z.string().optional(),
   CUSTOM_LLM_MODELS: z.string().optional(),
   CUSTOM_LLM_CONTEXT_WINDOW: z.coerce.number().int().positive().default(32_000),
-  CUSTOM_LLM_SUPPORTS_TOOLS: z
-    .enum(["true", "false"])
-    .default("true")
-    .transform((v) => v === "true"),
+  CUSTOM_LLM_SUPPORTS_TOOLS: boolean("true"),
   CUSTOM_LLM_INPUT_COST: z.coerce.number().min(0).default(0),
   CUSTOM_LLM_OUTPUT_COST: z.coerce.number().min(0).default(0),
 
@@ -40,6 +43,15 @@ const schema = z.object({
   MAX_RUN_TOKENS: z.coerce.number().int().positive().default(200_000),
   MAX_RUN_COST_USD: z.coerce.number().positive().default(2),
   RUN_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
+
+  // Durable execution. Off by default so `npm run dev` works with a single
+  // process; on in production, where `npm run worker` does the executing.
+  RUN_QUEUE_ENABLED: boolean("false"),
+  RUN_WORKER_CONCURRENCY: z.coerce.number().int().positive().default(2),
+  // A RUNNING run whose worker died is reaped after this long without progress.
+  RUN_STALE_AFTER_MS: z.coerce.number().int().positive().default(900_000),
+  // How often a running execution checks whether it was cancelled elsewhere.
+  RUN_CANCEL_POLL_MS: z.coerce.number().int().positive().default(3_000),
 
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
 });
