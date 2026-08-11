@@ -1,16 +1,18 @@
 import { Info } from "lucide-react";
 import { auth } from "@/server/auth";
 import { getProviderRegistry } from "@/lib/providers/registry";
-import { defaultBudgetFromEnv } from "@/lib/env";
+import { defaultBudgetFromEnv, env } from "@/lib/env";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/misc";
+import { ApiKeysCard } from "@/components/settings/api-keys-card";
 
 /**
- * Settings is intentionally read-only for provider keys.
+ * Settings.
  *
- * Keys live in server-side env vars and are never serialised to the client —
- * this page only reports whether a provider is configured.
+ * Server-side credentials are reported, never displayed: this page only knows
+ * whether a provider is configured. Personal keys are managed by ApiKeysCard,
+ * which is also write-only.
  */
 export default async function SettingsPage() {
   const session = await auth();
@@ -49,6 +51,10 @@ export default async function SettingsPage() {
               <span className="text-muted-foreground">Email</span>
               <span>{session?.user?.email ?? "—"}</span>
             </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Run execution</span>
+              <span>{env.RUN_QUEUE_ENABLED ? "queue worker" : "in-process"}</span>
+            </div>
           </CardContent>
         </Card>
 
@@ -72,12 +78,14 @@ export default async function SettingsPage() {
             ))}
             <p className="flex items-start gap-2 pt-2 text-xs text-muted-foreground">
               <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Keys are read from server environment variables and are never sent to the browser. To use a local or
+              Server keys are read from environment variables and are never sent to the browser. To use a local or
               self-hosted model, set <code className="font-mono">CUSTOM_LLM_BASE_URL</code> and{" "}
               <code className="font-mono">CUSTOM_LLM_MODELS</code>.
             </p>
           </CardContent>
         </Card>
+
+        <ApiKeysCard />
 
         <Card className="lg:col-span-2">
           <CardHeader>

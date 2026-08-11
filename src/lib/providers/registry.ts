@@ -1,9 +1,11 @@
 import type { LLMProvider, ModelInfo } from "@/types/llm";
 import { AppError } from "@/lib/errors";
+import { env } from "@/lib/env";
 import { MODEL_CATALOGUE, getModelInfo } from "./pricing";
 import { OpenAIProvider } from "./openai";
 import { AnthropicProvider } from "./anthropic";
 import { CustomProvider } from "./custom";
+import { getProviderKeyOverrides, type ProviderKeyOverrides } from "./context";
 
 /**
  * Provider registry.
@@ -14,6 +16,11 @@ import { CustomProvider } from "./custom";
  *   2. register it here,
  *   3. add its models to MODEL_CATALOGUE.
  * Nothing in the orchestration layer changes.
+ *
+ * Credentials come from the environment by default. If the current async
+ * context carries user-supplied keys (see `context.ts`), those take precedence
+ * for that run only — the server-wide keys remain the fallback, so a user who
+ * has not added a key still uses the deployment's.
  */
 class ProviderRegistry {
   private providers = new Map<string, LLMProvider>();
@@ -48,16 +55,46 @@ class ProviderRegistry {
   }
 }
 
-let registry: ProviderRegistry | null = null;
+export type { ProviderRegistry };
+
+function buildRegistry(overrides: ProviderKeyOverrides = {}): ProviderRegistry {
+  const registry = new ProviderRegistry();
+  registry.register(new OpenAIProvider(overrides.openai || env.OPENAI_API_KEY, env.OPENAI_BASE_URL));
+  registry.register(new AnthropicProvider(overrides.anthropic || env.ANTHROPIC_API_KEY));
+  // Always registered so the Settings page can report it as "not configured";
+  // it only becomes usable once CUSTOM_LLM_BASE_URL is set. A self-hosted
+  // endpoint is a deployment concern, so it is deliberately not overridable
+  // per user.
+  registry.register(new CustomProvider());
+  return registry;
+}
+
+let envRegistry: ProviderRegistry | null = null;
+
+// Registries built from user keys are cached so we do not construct a new SDK
+// client on every single model call inside a run. Bounded, because the key set
+// is per user and this map would otherwise grow with the user table.
+const MAX_CACHED = 50;
+const overrideRegistries = new Map<string, ProviderRegistry>();
 
 export function getProviderRegistry(): ProviderRegistry {
+  const overrides = getProviderKeyOverrides();
+
+  if (!overrides || Object.keys(overrides).length === 0) {
+    envRegistry ??= buildRegistry();
+    return envRegistry;
+  }
+
+  const cacheKey = Object.keys(overrides)
+    .sort()
+    .map((provider) => `${provider}:${overrides[provider]}`)
+    .join("|");
+
+  let registry = overrideRegistries.get(cacheKey);
   if (!registry) {
-    registry = new ProviderRegistry();
-    registry.register(new OpenAIProvider());
-    registry.register(new AnthropicProvider());
-    // Always registered so the Settings page can report it as "not configured";
-    // it only becomes usable once CUSTOM_LLM_BASE_URL is set.
-    registry.register(new CustomProvider());
+    if (overrideRegistries.size >= MAX_CACHED) overrideRegistries.clear();
+    registry = buildRegistry(overrides);
+    overrideRegistries.set(cacheKey, registry);
   }
   return registry;
 }
