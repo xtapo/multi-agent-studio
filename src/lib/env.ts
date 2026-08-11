@@ -1,0 +1,54 @@
+import { z } from "zod";
+
+/**
+ * Server-only environment access.
+ *
+ * Everything in here is validated once at module load so a misconfigured
+ * deployment fails fast instead of blowing up inside an agent run. Nothing in
+ * this file may ever be imported from a client component — the API keys live
+ * here and must never be serialized into the RSC payload.
+ */
+const schema = z.object({
+  DATABASE_URL: z.string().min(1),
+
+  AUTH_SECRET: z.string().min(16).default("dev-only-insecure-secret-change-me"),
+
+  ENCRYPTION_KEY: z.string().optional(),
+
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_BASE_URL: z.string().url().optional(),
+  ANTHROPIC_API_KEY: z.string().optional(),
+
+  TAVILY_API_KEY: z.string().optional(),
+  HTTP_TOOL_ALLOWED_HOSTS: z.string().optional().default(""),
+
+  MAX_AGENT_STEPS: z.coerce.number().int().positive().default(20),
+  MAX_TOOL_CALLS: z.coerce.number().int().positive().default(40),
+  MAX_RUN_TOKENS: z.coerce.number().int().positive().default(200_000),
+  MAX_RUN_COST_USD: z.coerce.number().positive().default(2),
+  RUN_TIMEOUT_MS: z.coerce.number().int().positive().default(600_000),
+
+  NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+});
+
+const parsed = schema.safeParse(process.env);
+
+if (!parsed.success) {
+  // eslint-disable-next-line no-console
+  console.error("\u274c Invalid environment variables:", parsed.error.flatten().fieldErrors);
+  throw new Error("Invalid environment configuration. See .env.example.");
+}
+
+export const env = parsed.data;
+
+export const httpToolAllowedHosts = env.HTTP_TOOL_ALLOWED_HOSTS.split(",")
+  .map((h) => h.trim().toLowerCase())
+  .filter(Boolean);
+
+export const defaultBudgetFromEnv = {
+  maxSteps: env.MAX_AGENT_STEPS,
+  maxToolCalls: env.MAX_TOOL_CALLS,
+  maxTokens: env.MAX_RUN_TOKENS,
+  maxCostUsd: env.MAX_RUN_COST_USD,
+  timeoutMs: env.RUN_TIMEOUT_MS,
+};
