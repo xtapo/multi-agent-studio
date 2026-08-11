@@ -1,5 +1,7 @@
 # Multi-Agent Studio
 
+![CI](https://github.com/xtapo/multi-agent-studio/actions/workflows/ci.yml/badge.svg)
+
 Build, connect and run teams of AI agents that collaborate on a single task.
 
 Create specialists (Researcher, Analyst, Writer, Critic…), wire them into a graph on a
@@ -17,6 +19,7 @@ with inputs, prompts, tool calls, structured outputs, token usage, latency and c
 - **Structured output** — JSON Schema validation with an automatic model-repair loop.
 - **Sandboxed tool registry** — 6 built-in tools, permission enforced at call time.
 - **Guardrails** — max steps / tool calls / tokens / cost / timeout, per run.
+- **Bring your own key** — personal provider keys, AES-256-GCM encrypted, never readable back.
 - **Full observability** — every agent step persisted; analytics page for cost and failure rate.
 - **Provider abstraction** — OpenAI, Anthropic and any OpenAI-compatible endpoint (Ollama, vLLM, OpenRouter, Azure).
 - **No chain-of-thought exposure** — only a concise reasoning summary is stored and shown.
@@ -35,7 +38,7 @@ with inputs, prompts, tool calls, structured outputs, token usage, latency and c
 | Queue | pg-boss (Postgres-backed), optional |
 | Realtime | Server-Sent Events over a persisted event log |
 | LLM | OpenAI · Anthropic · any OpenAI-compatible server (pluggable `LLMProvider`) |
-| Tests | Vitest |
+| Tests / CI | Vitest · GitHub Actions (typecheck, test, lint, build) |
 
 ---
 
@@ -102,6 +105,13 @@ second process — see [docs/durable-runs.md](docs/durable-runs.md):
 npm run worker
 ```
 
+Or bring up the whole stack (Postgres + web + worker) with Docker — see
+[docs/deployment.md](docs/deployment.md):
+
+```bash
+docker compose -f docker-compose.prod.yml up --build
+```
+
 ---
 
 ## First run in 60 seconds
@@ -145,6 +155,7 @@ SSE  GET /api/runs/:id/events?after=<seq>  → realtime UI
 | Run returns `runId` immediately, work continues in the background | No hanging HTTP request; the UI can reconnect at any time | Needs a durable event log (we have one) |
 | pg-boss instead of Redis/SQS | Runs are low-volume and expensive; Postgres is already there | Lower throughput ceiling than Redis |
 | Failed runs are never auto-retried | A retry re-spends money and can duplicate tool side effects | The user must restart the run |
+| User keys carried by `AsyncLocalStorage` | Credentials reach the provider layer without touching five domain signatures | Ambient state, so it must never be logged |
 | SSE over WebSocket | One-directional, works through the same Route Handler, resumable via `?after=` cursor | No client→server push (not needed) |
 | Events persisted before streaming | Reload or reconnect replays perfectly; no lost updates | One extra write per event |
 | Per-node `ContextPolicy` | Prevents uncontrolled prompt growth and error propagation | Slightly more configuration surface |
@@ -169,11 +180,12 @@ src/
     agents/                Agent Builder
     workflows/builder/     React Flow canvas, agent library, node inspector
     runs/                  Timeline, step cards, SSE hook
+    settings/              Personal API key management
     ui/                    Design-system primitives
   lib/
     agents/                Prompts, context builder, agent executor
     orchestration/         Engine, strategies, graph, budget, event bus, state, runner
-    providers/             LLMProvider abstraction (OpenAI, Anthropic, custom), pricing
+    providers/             LLMProvider abstraction (OpenAI, Anthropic, custom), pricing, credential context
     tools/                 Tool registry + 6 built-in tools
     memory/                Three-tier memory store
     validation/            JSON Schema validator + Zod API contracts
@@ -184,7 +196,7 @@ src/
     services/              Business logic used by routes and server components
     auth.ts                Auth.js configuration
   types/                   Domain types (agent, workflow, run, tool, llm)
-docs/                      Custom models, durable runs
+docs/                      Custom models, durable runs, API keys, deployment
 tests/                     Vitest unit tests
 ```
 
@@ -210,8 +222,11 @@ tests/                     Vitest unit tests
 | `GET` | `/api/tools` | Tool catalogue |
 | `GET` | `/api/models` | Available models per provider |
 | `GET` | `/api/analytics` | Aggregated metrics (`?days=30`) |
+| `GET` `POST` `DELETE` | `/api/settings/keys` | Personal provider keys (metadata only on read) |
+| `GET` | `/api/health` | Unauthenticated probe; 503 when the database is down |
 
-All routes are workspace-scoped and require a session. Write routes are rate limited.
+All routes except `/api/health` are workspace-scoped and require a session. Write routes
+are rate limited.
 
 ---
 
@@ -222,7 +237,7 @@ All routes are workspace-scoped and require a session. Write routes are rate lim
 | `DATABASE_URL` | yes | Postgres connection string |
 | `AUTH_SECRET` | yes | `openssl rand -base64 32` |
 | `AUTH_URL` | yes | `http://localhost:3000` in dev |
-| `ENCRYPTION_KEY` | yes | base64 32-byte key for AES-256-GCM |
+| `ENCRYPTION_KEY` | yes | base64 32-byte key for AES-256-GCM. **Back this up** — losing it makes stored user keys unreadable |
 | `OPENAI_API_KEY` | one of | |
 | `OPENAI_BASE_URL` | no | For Azure or an OpenAI-compatible gateway |
 | `ANTHROPIC_API_KEY` | no | Enables Claude models |
@@ -241,7 +256,8 @@ All routes are workspace-scoped and require a session. Write routes are rate lim
 | `RUN_CANCEL_POLL_MS` | no | Cross-process cancel poll. Default 3000 |
 
 **Provider keys never reach the browser.** They are read server-side only; user-supplied
-keys are encrypted with AES-256-GCM before hitting the database.
+keys are encrypted with AES-256-GCM before hitting the database and are never returned by
+any endpoint.
 
 ---
 
@@ -283,6 +299,7 @@ npm run lint         # ESLint
 - The HTTP tool honours a host allowlist; the code executor runs in a constrained sandbox with a timeout.
 - Every run carries a `BudgetTracker`: steps, tool calls, tokens, cost and wall-clock time. Exceeding any limit aborts the run cleanly with a `BUDGET_EXCEEDED` error.
 - Invalid structured output triggers validate → repair prompt → retry, then marks the agent failed rather than passing malformed data downstream.
+- Stored user API keys are write-only: no endpoint returns one in plaintext, not even to its owner.
 - Only a short, non-sensitive reasoning summary is persisted — never raw chain-of-thought.
 
 ---
@@ -291,6 +308,8 @@ npm run lint         # ESLint
 
 - [docs/custom-models.md](docs/custom-models.md) — Ollama, vLLM, LM Studio, OpenRouter, Azure.
 - [docs/durable-runs.md](docs/durable-runs.md) — queue mode, the worker, crash recovery, cancellation.
+- [docs/api-keys.md](docs/api-keys.md) — bring-your-own-key: storage, delivery, failure modes.
+- [docs/deployment.md](docs/deployment.md) — Docker, scaling the worker, health checks, go-live checklist.
 
 ---
 
