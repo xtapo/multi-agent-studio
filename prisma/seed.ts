@@ -115,8 +115,8 @@ async function main() {
       await prisma.workflowEdge.create({
         data: {
           workflowId: workflow.id,
-          sourceNodeId: nodeIdByKey.get(edge.from)!,
-          targetNodeId: nodeIdByKey.get(edge.to)!,
+          sourceNodeId: nodeIdByKey.get(edge.source)!,
+          targetNodeId: nodeIdByKey.get(edge.target)!,
           label: edge.label,
         },
       });
