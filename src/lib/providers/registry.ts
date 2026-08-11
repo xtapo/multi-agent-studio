@@ -3,6 +3,7 @@ import { AppError } from "@/lib/errors";
 import { MODEL_CATALOGUE, getModelInfo } from "./pricing";
 import { OpenAIProvider } from "./openai";
 import { AnthropicProvider } from "./anthropic";
+import { CustomProvider } from "./custom";
 
 /**
  * Provider registry.
@@ -54,6 +55,9 @@ export function getProviderRegistry(): ProviderRegistry {
     registry = new ProviderRegistry();
     registry.register(new OpenAIProvider());
     registry.register(new AnthropicProvider());
+    // Always registered so the Settings page can report it as "not configured";
+    // it only becomes usable once CUSTOM_LLM_BASE_URL is set.
+    registry.register(new CustomProvider());
   }
   return registry;
 }

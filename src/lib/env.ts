@@ -19,6 +19,19 @@ const schema = z.object({
   OPENAI_BASE_URL: z.string().url().optional(),
   ANTHROPIC_API_KEY: z.string().optional(),
 
+  // Bring-your-own / local model served over an OpenAI-compatible API.
+  CUSTOM_LLM_BASE_URL: z.string().url().optional(),
+  CUSTOM_LLM_API_KEY: z.string().optional(),
+  CUSTOM_LLM_NAME: z.string().optional(),
+  CUSTOM_LLM_MODELS: z.string().optional(),
+  CUSTOM_LLM_CONTEXT_WINDOW: z.coerce.number().int().positive().default(32_000),
+  CUSTOM_LLM_SUPPORTS_TOOLS: z
+    .enum(["true", "false"])
+    .default("true")
+    .transform((v) => v === "true"),
+  CUSTOM_LLM_INPUT_COST: z.coerce.number().min(0).default(0),
+  CUSTOM_LLM_OUTPUT_COST: z.coerce.number().min(0).default(0),
+
   TAVILY_API_KEY: z.string().optional(),
   HTTP_TOOL_ALLOWED_HOSTS: z.string().optional().default(""),
 

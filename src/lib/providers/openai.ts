@@ -11,30 +11,51 @@ import type {
 import { env } from "@/lib/env";
 import { AppError } from "@/lib/errors";
 
+export interface OpenAICompatibleOptions {
+  /** Registry id, also the model-id prefix ("openai" -> "openai:gpt-4o"). */
+  id: string;
+  displayName: string;
+  apiKey?: string;
+  baseURL?: string;
+}
+
 /**
- * OpenAI implementation of LLMProvider.
+ * OpenAI-compatible implementation of LLMProvider.
  *
  * This is the ONLY file in the codebase allowed to import the OpenAI SDK.
  * Everything vendor-specific — message shape, tool-call format, JSON schema
  * response format, error mapping — is normalised here.
+ *
+ * The class is parameterised by id/baseURL so the exact same transport can
+ * serve OpenAI itself and any compatible endpoint (Ollama, vLLM, LM Studio,
+ * LiteLLM, OpenRouter, Together, Groq, Azure). See `custom.ts`.
  */
-export class OpenAIProvider implements LLMProvider {
-  readonly id = "openai";
-  readonly displayName = "OpenAI";
+export class OpenAICompatibleProvider implements LLMProvider {
+  readonly id: string;
+  readonly displayName: string;
 
+  protected readonly apiKey?: string;
+  protected readonly baseURL?: string;
   private client: OpenAI | null = null;
 
-  constructor(private readonly apiKey = env.OPENAI_API_KEY, private readonly baseURL = env.OPENAI_BASE_URL) {}
+  constructor(options: OpenAICompatibleOptions) {
+    this.id = options.id;
+    this.displayName = options.displayName;
+    this.apiKey = options.apiKey;
+    this.baseURL = options.baseURL;
+  }
 
   isConfigured(): boolean {
     return Boolean(this.apiKey);
   }
 
-  private getClient(): OpenAI {
-    if (!this.apiKey) {
-      throw new AppError("PROVIDER_ERROR", "OPENAI_API_KEY is not configured on the server.");
+  protected getClient(): OpenAI {
+    if (!this.isConfigured()) {
+      throw new AppError("PROVIDER_ERROR", `${this.displayName} is not configured on the server.`);
     }
-    this.client ??= new OpenAI({ apiKey: this.apiKey, baseURL: this.baseURL, maxRetries: 0 });
+    // Some local servers accept any non-empty key; we still require a value so
+    // the SDK does not fall back to reading process.env implicitly.
+    this.client ??= new OpenAI({ apiKey: this.apiKey ?? "not-needed", baseURL: this.baseURL, maxRetries: 0 });
     return this.client;
   }
 
@@ -42,16 +63,17 @@ export class OpenAIProvider implements LLMProvider {
     if (!this.isConfigured()) return [];
     try {
       const response = await this.getClient().models.list();
-      return response.data.map((m) => `openai:${m.id}`);
+      return response.data.map((m) => `${this.id}:${m.id}`);
     } catch (err) {
-      console.error("Failed to fetch OpenAI models:", err);
+      console.error(`Failed to fetch ${this.displayName} models:`, err);
       return [];
     }
   }
 
-  /** Strip our "openai:" prefix before talking to the vendor API. */
+  /** Strip our provider prefix before talking to the vendor API. */
   private bareModel(model: string): string {
-    return model.startsWith("openai:") ? model.slice("openai:".length) : model;
+    const prefix = `${this.id}:`;
+    return model.startsWith(prefix) ? model.slice(prefix.length) : model;
   }
 
   private toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
@@ -141,10 +163,11 @@ export class OpenAIProvider implements LLMProvider {
   /** Normalise vendor errors onto our retry-aware taxonomy. */
   private mapError(err: unknown): AppError {
     if (err instanceof OpenAI.APIError) {
-      if (err.status === 429) return new AppError("RATE_LIMITED", `OpenAI rate limit: ${err.message}`);
+      const who = this.displayName;
+      if (err.status === 429) return new AppError("RATE_LIMITED", `${who} rate limit: ${err.message}`);
       if (err.status === 408) return new AppError("PROVIDER_TIMEOUT", err.message);
-      if (err.status && err.status >= 500) return new AppError("PROVIDER_ERROR", `OpenAI ${err.status}: ${err.message}`);
-      return new AppError("PROVIDER_ERROR", `OpenAI ${err.status ?? ""}: ${err.message}`);
+      if (err.status && err.status >= 500) return new AppError("PROVIDER_ERROR", `${who} ${err.status}: ${err.message}`);
+      return new AppError("PROVIDER_ERROR", `${who} ${err.status ?? ""}: ${err.message}`);
     }
     if (err instanceof Error && err.name === "AbortError") return new AppError("CANCELLED", "Request aborted");
     return new AppError("PROVIDER_ERROR", err instanceof Error ? err.message : String(err));
@@ -219,5 +242,12 @@ export class OpenAIProvider implements LLMProvider {
 
     yield { type: "usage", usage };
     yield { type: "done", response: { model: request.model, text, toolCalls, usage, finishReason } };
+  }
+}
+
+/** OpenAI proper. Also covers Azure and gateways via OPENAI_BASE_URL. */
+export class OpenAIProvider extends OpenAICompatibleProvider {
+  constructor(apiKey = env.OPENAI_API_KEY, baseURL = env.OPENAI_BASE_URL) {
+    super({ id: "openai", displayName: "OpenAI", apiKey, baseURL });
   }
 }
